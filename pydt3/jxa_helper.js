@@ -1,6 +1,16 @@
+/**
+ * This file provides JavaScript for Automation (JXA) helper functions for bridging
+ * between Python and macOS applications. It handles object serialization, method calls,
+ * and reference management for JXA objects.
+ */
+
+/**
+ * Creates a unique ID generator with closure scope
+ * @returns {Function} Function that generates unique IDs for objects
+ */
 const getObjectId = (() => {
-    let count = 0;
-    const objIdMap = new WeakMap();
+    let count = 0;  // Counter for generating unique IDs
+    const objIdMap = new WeakMap();  // Maps objects to their IDs using weak references
     return (object) => {
       const objectId = objIdMap.get(object);
       if (objectId === undefined) {
@@ -8,24 +18,38 @@ const getObjectId = (() => {
         objIdMap.set(object, count);
         return count;
       }
-    
       return objectId;
     }
 })();
 
-
+// Global object cache for storing JXA objects by their IDs
 const objectCacheMap = {};
 
+/**
+ * Stores an object in the cache and returns its ID
+ * @param {Object} obj - Object to cache
+ * @returns {number} The object's unique ID
+ */
 function cacheObjct(obj) {
     let id = getObjectId(obj);
     objectCacheMap[id] = obj;
     return id;
 }
 
+/**
+ * Retrieves an object from the cache by its ID
+ * @param {number} id - ID of the object to retrieve
+ * @returns {Object} The cached object
+ */
 function getCachedObject(id) {
     return objectCacheMap[id];
 }
 
+/**
+ * Wraps a function to handle JSON string I/O
+ * @param {Function} func - Function to wrap
+ * @returns {Function} Wrapped function that handles JSON conversion
+ */
 function jsonIOWrapper(func) {
     return (param_str) => {
         let param = JSON.parse(param_str);
@@ -34,8 +58,12 @@ function jsonIOWrapper(func) {
     }
 }
 
+/**
+ * Creates a cached application getter
+ * @returns {Function} Function that returns cached application instances
+ */
 const getAssociatedApplication = (() => {
-    const appCache = {};
+    const appCache = {};  // Cache for application instances
     return function getAssociatedApplication(obj) {
         let displayString = Automation.getDisplayString(obj);
         let m = displayString.match(/^Application\(['"]([^)]*)['"]\)/);
@@ -50,6 +78,11 @@ const getAssociatedApplication = (() => {
     }
 })();
 
+/**
+ * Checks if a specifier represents a container (array-like object)
+ * @param {Object} specifier - Specifier to check
+ * @returns {boolean} True if specifier is a container
+ */
 function guessIsContainerSpecifier(specifier) {
     if (!ObjectSpecifier.hasInstance(specifier)) {
         return false;
@@ -59,8 +92,12 @@ function guessIsContainerSpecifier(specifier) {
     return testPropNames.every((propName) => propName in proto);
 }
 
+/**
+ * Attempts to determine the class type of a specifier
+ * @param {Object} specifier - Specifier to analyze
+ * @returns {string|undefined} The determined class name
+ */
 function guessClassOfSpecifier(specifier) {
-    // It's at best a guess due to the nature of JXA.
     if (!ObjectSpecifier.hasInstance(specifier)) {
         return undefined;
     }
@@ -73,18 +110,26 @@ function guessClassOfSpecifier(specifier) {
         specifierClass = specifier.class();
     } catch (e) {
         if (e.errorNumber === -1700) {
-            // The object is not a specifier.
             return undefined;
         }
     }
-
     return specifierClass;
 }
 
+/**
+ * Checks if a value is a JSON primitive
+ * @param {*} obj - Value to check
+ * @returns {boolean} True if value is a JSON primitive
+ */
 function isJsonNodeValue(obj) {
     return obj === null || ['undefined', 'string', 'number', 'boolean'].includes(typeof obj);
 }
 
+/**
+ * Checks if an object is a plain JSON object
+ * @param {*} obj - Object to check
+ * @returns {boolean} True if object is plain JSON
+ */
 function isPlainObj(obj) {
     if (isJsonNodeValue(obj)) {
         return true;
@@ -100,7 +145,11 @@ function isPlainObj(obj) {
     }
 }
 
-
+/**
+ * Converts a JXA object to a JSON representation
+ * @param {*} obj - Object to convert
+ * @returns {Object} JSON representation of the object
+ */
 function wrapObjToJson(obj) {
     if (obj === undefined) {
         obj = null;
@@ -113,13 +162,14 @@ function wrapObjToJson(obj) {
     }
 
     if (typeof obj === 'object') {
-        // TODO: Handle Date
+        // Handle Date objects
         if (obj instanceof Date) {
             return {
                 type: 'date',
                 data: obj.getTime() / 1000
             }
         }
+        // Handle Arrays
         if (Array.isArray(obj)) {
             let data = []
             for (let i in obj) {
@@ -130,6 +180,7 @@ function wrapObjToJson(obj) {
                 data: data
             }
         }
+        // Handle plain objects
         if (obj.constructor.name === 'Object') {
             let data = {}
             for (let k in obj) {
@@ -144,13 +195,11 @@ function wrapObjToJson(obj) {
         throw new Error(`wrapObjToJson: Unknown type: ${typeof obj}`);
     }
 
+    // Handle JXA object specifiers
     if (ObjectSpecifier.hasInstance(obj)) {
         let guessClass = guessClassOfSpecifier(obj);
         if (guessClass === undefined) {
-            // The object is a specifier but we don't know its class.
-            // This could mean that the object is a reference to a primitive value.
-            // eg. a `number`, `bool` or `string`.
-            // In that case, the best we can do is to return the evaluated value.
+            // If we can't determine the class, try to evaluate the specifier
             let evaluated = obj();
             return wrapObjToJson(evaluated);
         }
@@ -173,10 +222,7 @@ function wrapObjToJson(obj) {
             }
         }
 
-        // If the evaluated object is a plain object, return the evaluated value.
-        // WARNING: This may cause problems if the object is a reference to a text or dict.
-        //          In that case, the object "can" be interpreted as a plain object but still
-        //          has properties that are references to other objects.
+        // Try to evaluate the object to get a plain representation
         let evaluated = obj();
         if (!isPlainObj(evaluated)) {
             evaluated = null;
@@ -190,6 +236,7 @@ function wrapObjToJson(obj) {
         }
     }
 
+    // Handle functions
     if (typeof obj === 'function') {
         return {
             type: 'reference',
@@ -201,6 +248,11 @@ function wrapObjToJson(obj) {
     throw new Error(`Unknown type: ${typeof obj}`);
 }
 
+/**
+ * Converts a JSON representation back to a JXA object
+ * @param {Object} obj - JSON object to convert
+ * @returns {*} The restored JXA object
+ */
 function unwrapObjFromJson(obj) {
     if (obj.type === 'plain') {
         return obj.data;
@@ -216,127 +268,90 @@ function unwrapObjFromJson(obj) {
     }
 }
 
-function getApplication(params) {
-    let name = params.name;
+/**
+ * Bridge Functions
+ * These functions provide the interface between Python and JXA
+ */
+
+function _echo(params) {
+    return params;
+}
+echo = jsonIOWrapper(_echo);
+
+function _releaseObjectWithId({id}) {
+    delete objectCacheMap[id];
+}
+releaseObjectWithId = jsonIOWrapper(_releaseObjectWithId);
+
+function _getApplication({name}) {
     let app = Application(name);
     app.includeStandardAdditions = true
-    return wrapObjToJson(app);
+    return app;
 }
-getApplication = jsonIOWrapper(getApplication);
+getApplication = jsonIOWrapper(_getApplication);
 
-function isMethod(obj) {
-    return typeof obj === 'function' && obj.constructor.name === 'Function';
-}
-
-function getProperties(params) {
-    let objId = params.objId;
-    let names = params.names;
-    let obj = objectCacheMap[objId];
-    let data = {};
-    for (let n of names) {
-        let property = obj[n];
-        if (isMethod(property)) {
-            property = property.bind(obj);
-        }
-        data[n] = wrapObjToJson(property);
-    }
-    return data;
-}
-getProperties = jsonIOWrapper(getProperties);
-
-
-function setPropertyValues(params) {
-    let objId = params.objId;
-    let properties = params.properties;
-
-    let obj = objectCacheMap[objId];
-
-    for (let n in properties) {
-        let value = properties[n];
-        obj[n] = value;
-    }
-    return {};
-}
-setPropertyValues = jsonIOWrapper(setPropertyValues);
-
-function callMethod(params) {
-    let objId = params.objId;
-    let name = params.name;
-    let args = params.args;
-    let kwargs = params.kwargs;
-
-    let obj = getCachedObject(objId);
-    let func;
-
-    if (name === null) {
-        func = obj
-    } else {
-        func = obj[name].bind(obj);
-    }
-
-    if (args === null) {
-        args = [];
-    }
-
-    for (let i = 0; i < args.length; i++) {
-        args[i] = unwrapObjFromJson(args[i]);
-    }
-    if (kwargs !== null) {
-        for (let k in params.kwargs) {
-            kwargs[k] = unwrapObjFromJson(params.kwargs[k]);
-        }
-    }
-
-    let result = func(...args, kwargs);
-    return wrapObjToJson(result);
-}
-callMethod = jsonIOWrapper(callMethod);
-
-
-function releaseObject(params) {
-    let objId = params.objId;
-    delete objectCacheMap[objId];
-    return {};
-}
-releaseObject = jsonIOWrapper(releaseObject);
-
-function evalJXACodeSnippet(params) {
-    params = unwrapObjFromJson(params);
-    let source = params.source;
-    let locals = params.locals;
+function _evalJXACodeSnippet({source, locals}) {
     for (let k in locals) {
         eval(`var ${k} = locals[k];`);
     }
-    return wrapObjToJson(eval(source));
+    const value = eval(source);
+    return value;
 }
-evalJXACodeSnippet = jsonIOWrapper(evalJXACodeSnippet);
+evalJXACodeSnippet = jsonIOWrapper(_evalJXACodeSnippet);
 
-
-function evalAppleScriptCodeSnippet(params) {
-    params = unwrapObjFromJson(params);
-    let source = params.source;
+function _evalAppleScriptCodeSnippet({source}) {
     let app = Application.currentApplication();
     app.includeStandardAdditions = true;
-
     let result = app.runScript(source, {in: 'AppleScript'});
-    return wrapObjToJson(result);
+    return result;
 }
-evalAppleScriptCodeSnippet = jsonIOWrapper(evalAppleScriptCodeSnippet);
+evalAppleScriptCodeSnippet = jsonIOWrapper(_evalAppleScriptCodeSnippet);
 
-
-function callSelf(params) {
-    let objId = params.objId;
-    let args = params.args;
-    
-    for (let i = 0; i < args.length; i++) {
-        args[i] = unwrapObjFromJson(args[i]);
+function _getProperty({obj, name}) {
+    let value = obj[name];
+    if (Util.isMethod(value)) {
+        value = value.bind(obj);
     }
-    let kwargs = {};
-    for (let k in params.kwargs) {
-        kwargs[k] = unwrapObjFromJson(params.kwargs[k]);
-    }
-    let obj = objectCacheMap[objId];
-    let result = obj(...args, kwargs);
-    return wrapObjToJson(result);
+    return value;
 }
-callSelf = jsonIOWrapper(callSelf);
+getProperty = jsonIOWrapper(_getProperty);
+
+function _getProperties({obj, properties}) {
+    let result = {};
+    for (let k of properties) {
+        result[k] = _getProperty({obj, name: k});
+    }
+    return result;
+}
+getProperties = jsonIOWrapper(_getProperties);
+
+function _setProperties({obj, keyValues}) {
+    for (let k in keyValues) {
+        obj[k] = keyValues[k];
+    }
+}
+setProperties = jsonIOWrapper(_setProperties);
+
+function _callMethod({obj, name, args, kwargs}) {
+    let method = obj[name];
+    if (method === undefined) {
+        throw new Error(`Method not found: ${name}`);
+    }
+    if (Util.isMethod(method)) {
+        method = method.bind(obj);
+    }
+    if (args === null || args === undefined) {
+        args = [];
+    }
+    if (kwargs === null || kwargs === undefined) {
+        return method(...args);
+    } else {
+        return method(...args, kwargs);
+    }
+}
+callMethod = jsonIOWrapper(_callMethod);
+
+function _callSelf({obj, args, kwargs}) {
+    return obj(...args, kwargs);
+}
+callSelf = jsonIOWrapper(_callSelf);

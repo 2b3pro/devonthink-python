@@ -1,10 +1,20 @@
+/**
+ * ObjectPoolManager handles the lifecycle of JXA objects in memory.
+ * It maintains a mapping between object IDs and their instances to enable
+ * reference tracking and garbage collection.
+ */
 class ObjectPoolManager {
     constructor() {
-        this._currentId = 0;
-        this._objectIdMap = new Map();
-        this._idObjectMap = new Map();
+        this._currentId = 0;  // Counter for generating unique object IDs
+        this._objectIdMap = new Map();  // Maps objects to their IDs
+        this._idObjectMap = new Map();  // Maps IDs to their objects
     }
 
+    /**
+     * Retrieves an object by its ID from the pool
+     * @param {number} id - The object's unique identifier
+     * @returns {Object} The stored object instance
+     */
     getObject(id) {
         try {
             return this._idObjectMap.get(id);
@@ -13,6 +23,11 @@ class ObjectPoolManager {
         }
      }
 
+    /**
+     * Gets or assigns a unique ID for an object
+     * @param {Object} obj - The object to track
+     * @returns {number} The object's unique identifier
+     */
     getId(obj) {
         if (!this._objectIdMap.has(obj)) {
             this._currentId += 1;
@@ -22,6 +37,10 @@ class ObjectPoolManager {
         return this._currentId;
     }
 
+    /**
+     * Removes an object from the pool by its ID
+     * @param {number} objectId - ID of the object to release
+     */
     releaseObjectWithId(objectId) {
         const obj = this.getObject(objectId);
         this._idObjectMap.delete(objectId);
@@ -29,7 +48,15 @@ class ObjectPoolManager {
     }
 }
 
+/**
+ * Utility class providing helper methods for JXA operations
+ */
 class Util {
+    /**
+     * Extracts the application name from an object's automation string
+     * @param {Object} obj - The JXA object
+     * @returns {string|null} The application name or null
+     */
     static getAssociatedApplicationName(obj) {
         let displayString = Automation.getDisplayString(obj);
         let m = displayString.match(/^Application\(['"]([^)]*)['"]\)/);
@@ -40,8 +67,12 @@ class Util {
         return null;
     }
 
+    /**
+     * Determines if a specifier represents a container (array-like object)
+     * @param {Object} specifier - The object specifier to check
+     * @returns {boolean} True if the specifier is a container
+     */
     static guessIsSpecifierContainer(specifier) {
-        // If it is an array specifier.
         if (!ObjectSpecifier.hasInstance(specifier)) {
             return false;
         }
@@ -50,8 +81,12 @@ class Util {
         return testPropNames.every((propName) => propName in proto);
     }
 
+    /**
+     * Attempts to determine the class type of a specifier object
+     * @param {Object} specifier - The object specifier to analyze
+     * @returns {string|undefined} The determined class name or undefined
+     */
     static guessClassOfSpecifier(specifier) {
-        // It's at best a guess due to the nature of JXA.
         if (!ObjectSpecifier.hasInstance(specifier)) {
             return undefined;
         }
@@ -68,7 +103,6 @@ class Util {
                 specifierClass = specifier.class();
             } catch (e) {
                 if (e.errorNumber === -1700) {
-                    // The object is not a specifier.
                     return classOf;
                 }
             }
@@ -77,10 +111,20 @@ class Util {
         return classOf;
     }
 
+    /**
+     * Checks if a value is a JSON primitive type
+     * @param {*} obj - Value to check
+     * @returns {boolean} True if the value is a JSON primitive
+     */
     static isJsonNode(obj) {
         return obj === null || ['undefined', 'string', 'number', 'boolean'].includes(typeof obj);
     }
 
+    /**
+     * Checks if an object is a plain JSON object (no complex types)
+     * @param {*} obj - Object to check
+     * @returns {boolean} True if the object is plain JSON
+     */
     static isPlainJson(obj) {
         if (this.isJsonNode(obj)) {
             return true;
@@ -96,19 +140,32 @@ class Util {
         }
     }
 
+    /**
+     * Checks if an object is a method
+     * @param {*} obj - Object to check
+     * @returns {boolean} True if the object is a method
+     */
     static isMethod(obj) {
         return typeof obj === 'function' && obj.constructor.name === 'Function';
     }
 }
 
+/**
+ * Handles conversion between JXA objects and JSON for Python communication
+ */
 class JsonTranslator {
     /**
-     * @param {ObjectPoolManager} objectPoolManager 
+     * @param {ObjectPoolManager} objectPoolManager - The object pool to use
      */
     constructor(objectPoolManager) {
         this.objectPoolManager = objectPoolManager;
     }
 
+    /**
+     * Converts a JXA object to a JSON representation
+     * @param {*} obj - The object to convert
+     * @returns {Object} JSON representation of the object
+     */
     wrapToJson(obj) {
         if (obj === undefined) {
             obj = null;
@@ -192,7 +249,6 @@ class JsonTranslator {
             }
         }
 
-
         if (typeof obj === 'object') {
             if (obj instanceof Date) {
                 return {
@@ -224,7 +280,6 @@ class JsonTranslator {
             throw new Error(`wrapObjToJson: Unknown type: ${typeof obj}`);
         }
 
-
         if (typeof obj === 'function') {
             return {
                 type: 'reference',
@@ -236,6 +291,11 @@ class JsonTranslator {
         throw new Error(`Unknown type: ${typeof obj}`);
     }
 
+    /**
+     * Converts a JSON representation back to a JXA object
+     * @param {Object} obj - The JSON object to convert
+     * @returns {*} The restored JXA object
+     */
     unwrapFromJson(obj) {
         if (obj.type === 'plain') {
             return obj.data;
@@ -255,6 +315,11 @@ class JsonTranslator {
         }
     }
 
+    /**
+     * Wraps a function to handle JSON string I/O
+     * @param {Function} func - Function to wrap
+     * @returns {Function} Wrapped function that handles JSON conversion
+     */
     strIOFuncWrapper(func) {
         return  (strParams) => {
             let params = JSON.parse(strParams);
@@ -274,30 +339,46 @@ class JsonTranslator {
     }
 }
 
-
-
+// Create global instances used by the bridge functions
 const objectPoolManager = new ObjectPoolManager();
 const jsonTranslator = new JsonTranslator(objectPoolManager);
 
-
+/**
+ * Echo function for testing the bridge
+ * @param {*} params - Parameters to echo back
+ * @returns {*} The same parameters
+ */
 function _echo(params) {
     return params;
 }
 echo = jsonTranslator.strIOFuncWrapper(_echo);
 
+/**
+ * Releases an object from the pool
+ * @param {Object} param0 - Object containing the ID to release
+ */
 function _releaseObjectWithId({id}) {
     objectPoolManager.releaseObjectWithId(id);
 }
 releaseObjectWithId = jsonTranslator.strIOFuncWrapper(_releaseObjectWithId);
 
+/**
+ * Creates a new application instance
+ * @param {Object} param0 - Object containing the application name
+ * @returns {Object} The application instance
+ */
 function _getApplication({name}) {
-    // throw new Error(`Application name: ${name} not found, typeof name: ${typeof name}`);
     let theApp = Application(name);
     theApp.includeStandardAdditions = true
     return theApp;
 }
 getApplication = jsonTranslator.strIOFuncWrapper(_getApplication);
 
+/**
+ * Evaluates a JXA code snippet with optional local variables
+ * @param {Object} param0 - Object containing source code and locals
+ * @returns {*} Result of the evaluation
+ */
 function _evalJXACodeSnippet({source, locals}) {
     for (let k in locals) {
         eval(`var ${k} = locals[k];`);
@@ -307,6 +388,11 @@ function _evalJXACodeSnippet({source, locals}) {
 }
 evalJXACodeSnippet = jsonTranslator.strIOFuncWrapper(_evalJXACodeSnippet);
 
+/**
+ * Evaluates an AppleScript code snippet
+ * @param {Object} param0 - Object containing the source code
+ * @returns {*} Result of the evaluation
+ */
 function _evalAppleScriptCodeSnippet({source}) {
     let app = Application.currentApplication();
     app.includeStandardAdditions = true;
@@ -316,6 +402,11 @@ function _evalAppleScriptCodeSnippet({source}) {
 }
 evalAppleScriptCodeSnippet = jsonTranslator.strIOFuncWrapper(_evalAppleScriptCodeSnippet);
 
+/**
+ * Gets a property value from an object
+ * @param {Object} param0 - Object containing target and property name
+ * @returns {*} The property value
+ */
 function _getProperty({obj, name}) {
     let value = obj[name];
     if (Util.isMethod(value)) {
@@ -325,6 +416,11 @@ function _getProperty({obj, name}) {
 }
 getProperty = jsonTranslator.strIOFuncWrapper(_getProperty);
 
+/**
+ * Gets multiple property values from an object
+ * @param {Object} param0 - Object containing target and property names
+ * @returns {Object} Object containing the property values
+ */
 function _getProperties({obj, properties}) {
     let result = {};
     for (let k of properties) {
@@ -334,6 +430,10 @@ function _getProperties({obj, properties}) {
 }
 getProperties = jsonTranslator.strIOFuncWrapper(_getProperties);
 
+/**
+ * Sets multiple property values on an object
+ * @param {Object} param0 - Object containing target and key-value pairs
+ */
 function _setProperties({obj, keyValues}) {
     for (let k in keyValues) {
         obj[k] = keyValues[k];
@@ -341,6 +441,11 @@ function _setProperties({obj, keyValues}) {
 }
 setProperties = jsonTranslator.strIOFuncWrapper(_setProperties);
 
+/**
+ * Calls a method on an object
+ * @param {Object} param0 - Object containing target, method name, and arguments
+ * @returns {*} Result of the method call
+ */
 function _callMethod({obj, name, args, kwargs}) {
     let method = obj[name];
     if (method === undefined) {
@@ -348,7 +453,6 @@ function _callMethod({obj, name, args, kwargs}) {
     }
     if (Util.isMethod(method)) {
         method = method.bind(obj);
-
     }
     if (args === null || args === undefined) {
         args = [];
@@ -362,6 +466,11 @@ function _callMethod({obj, name, args, kwargs}) {
 }
 callMethod = jsonTranslator.strIOFuncWrapper(_callMethod);
 
+/**
+ * Calls an object as a function
+ * @param {Object} param0 - Object containing target and arguments
+ * @returns {*} Result of the function call
+ */
 function _callSelf({obj, args, kwargs}) {
     return obj(...args, kwargs);
 }
