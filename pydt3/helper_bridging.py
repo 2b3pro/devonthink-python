@@ -19,20 +19,43 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default script path for JXA helper functionality
 DEFAULT_SCRIPT_PATH = os.path.join(os.path.dirname(__file__), 'jxa_helper.scpt')
 
 
 class HelperScript(OSAScript):
+    """Bridge between Python and JavaScript for Automation (JXA).
+    
+    This class manages the communication between Python and JXA/AppleScript,
+    handling object serialization, method calls, and reference counting.
+    """
+    
+    # Class maps for object type resolution
     _class_map = {} # type: dict[str, dict[str, type[OSAObjProxy]]]
     _default_app_class_map = {}
 
     default: HelperScript
 
     def __init__(self, script: NSAppleScript, osaobj_rc: Optional[dict] = None):
+        """Initialize the helper script.
+        
+        Args:
+            script: The compiled AppleScript/JXA script
+            osaobj_rc: Reference counting dictionary for OSA objects
+        """
         super().__init__(script)
         self._osaobj_rc = {} if osaobj_rc is None else osaobj_rc
 
     def _unwrap_from_json(self, response: dict):
+        """Convert JSON response from JXA to Python objects.
+        
+        Handles various types including:
+        - Plain values (strings, numbers, etc)
+        - Dates
+        - Object references
+        - Arrays
+        - Dictionaries
+        """
         if response['type'] == 'plain':
             return response.get('data')
         elif response['type'] == 'date':
@@ -62,6 +85,15 @@ class HelperScript(OSAScript):
             }
 
     def _wrap_to_json(self: HelperScript, obj) -> dict:
+        """Convert Python objects to JSON for JXA communication.
+        
+        Handles:
+        - Basic types (int, float, str, bool, None)
+        - Datetime objects
+        - Lists/tuples
+        - Dictionaries
+        - OSA proxy objects
+        """
         if isinstance(obj, (int, float, str, bool, type(None))):
             return {
                 'type': 'plain',
@@ -93,7 +125,14 @@ class HelperScript(OSAScript):
             raise TypeError(f'Unsupported type: {type(obj)}')
     
     def _call_func_pyobj_inout(self, func_name: str, params):
-
+        """Call a JXA function with Python objects.
+        
+        Handles serialization of parameters to JSON and deserialization of results.
+        
+        Args:
+            func_name: Name of the JXA function to call
+            params: Parameters to pass to the function
+        """
         params = self._wrap_to_json(params)
         logger.debug(f'func_name: {func_name}')
         params = json.dumps(params)
@@ -104,49 +143,64 @@ class HelperScript(OSAScript):
         result = json.loads(result)
         return self._unwrap_from_json(result)
 
+    # Core JXA interaction methods
 
     def echo(self, params):
+        """Echo parameters back (useful for testing)."""
         return self._call_func_pyobj_inout('echo', params)
     
     def release_object_with_id(self, id: int):
+        """Release an OSA object by its ID."""
         return self._call_func_pyobj_inout('releaseObjectWithId', {'id': id})
 
     def get_application(self, name: str) -> Application:
+        """Get a reference to a macOS application by name."""
         return self._call_func_pyobj_inout('getApplication', {'name': name})
     
     def eval_jxa_code_snippet(self, source: str, locals: Optional[dict] = None):
+        """Evaluate a JXA code snippet."""
         return self._call_func_pyobj_inout('evalJXACodeSnippet', {'source': source, 'locals': locals})
     
     def eval_applescript_code_snippet(self, source: str, locals: Optional[dict] = None):
+        """Evaluate an AppleScript code snippet."""
         return self._call_func_pyobj_inout('evalAppleScriptCodeSnippet', {'source': source, 'locals': locals})
 
     def get_property(self, obj: OSAObjProxy, name: str):
+        """Get a property value from an OSA object."""
         return self._call_func_pyobj_inout('getProperty', {'obj': obj, 'name': name})
 
     def get_properties(self, obj: OSAObjProxy, properties: list):
+        """Get multiple property values from an OSA object."""
         return self._call_func_pyobj_inout('getProperties', {'obj': obj, 'properties': properties})
 
     def set_properties(self, obj: OSAObjProxy, key_values: dict):
+        """Set multiple property values on an OSA object."""
         return self._call_func_pyobj_inout('setProperties', {'obj': obj, 'keyValues': key_values})
     
     def call_method(self, obj: OSAObjProxy, name: str, args = None, kwargs: dict = None):
+        """Call a method on an OSA object."""
         return self._call_func_pyobj_inout('callMethod', {'obj': obj, 'name': name, 'args': args, 'kwargs': kwargs})
 
     def call_self(self, obj: OSAObjProxy, args = None, kwargs: dict = None):
+        """Call an OSA object as a function."""
         return self._call_func_pyobj_inout('callSelf', {'obj': obj, 'args': args, 'kwargs': kwargs})
 
     def get_parent_of_class(self, application: str, class_name: str):
+        """Get the parent class name for a given class in an application."""
         return self.eval_jxa_code_snippet(f'Application("{application}").parentOfClass("{class_name}")')
 
     @lru_cache(maxsize=1024)
     def determine_class(self, app_name: str, class_name: str | None) -> type[OSAObjProxy]:
+        """Determine the appropriate Python class for an OSA object.
+        
+        Uses class maps and inheritance hierarchy to find the right wrapper class.
+        """
         if class_name is None:
             return DefaultOSAObjProxy
         elif class_name.startswith('array::'):
             return OSAObjArray
         elif class_name == 'function':
             return DefaultOSAObjProxy
-
 
         current_class_name = class_name
         reference_cls = None
@@ -164,16 +218,19 @@ class HelperScript(OSAScript):
 
     @classmethod
     def register_class_map(cls, app_name: str, class_map: dict[str, type[OSAObjProxy]]):
+        """Register class mappings for an application."""
         cls._class_map[app_name] = class_map
     
     @classmethod
     def set_default_class_map(cls, class_map: dict[str, type[OSAObjProxy]]):
+        """Set the default class mappings."""
         cls._default_app_class_map = class_map
 
     def __hash__(self) -> int:
         return id(self)
 
 
+# Initialize default helper script
 HelperScript.default = HelperScript.from_path(DEFAULT_SCRIPT_PATH)
 
 if __name__ == '__main__':
